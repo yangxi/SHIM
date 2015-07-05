@@ -442,7 +442,6 @@ Java_moma_MomaThread_shimOverheadSoftSampling(JNIEnv * env, jobject obj, jint ra
   print_freq(myjshim);
 }
 
-//#define DUMP_IPC_TIMELINE
 
 JNIEXPORT void JNICALL
 Java_moma_MomaThread_shimOverheadIPCHistogram(JNIEnv * env, jobject obj, jint rate)
@@ -652,8 +651,9 @@ Java_moma_MomaThread_shimCounting(JNIEnv * env, jobject obj)
 
 
 
+#define DUMP_IPC_TIMELINE
 
-JNIEXPORT void JNICALL
+JNIEXPORT int JNICALL
 Java_moma_MomaThread_shimCMIDHistogram(JNIEnv * env, jobject obj, jint rate, jint maxCMID)
 {
   int cpuid = get_cpuid();
@@ -661,15 +661,15 @@ Java_moma_MomaThread_shimCMIDHistogram(JNIEnv * env, jobject obj, jint rate, jin
   shim *myshim = (shim *)myjshim;
   FILE *dumpfd = myjshim->dumpfd;
 
-#ifdef DUMP_IPC_TIMELINE
   unsigned int *dumpbuf = NULL;
+#ifdef DUMP_IPC_TIMELINE
   int dumpbuf_index = 0;
-  dumpbuf = calloc(DUMP_BUFFER_SIZE, sizeof(uint64_t));
+  dumpbuf = calloc(DUMP_BUFFER_SIZE, sizeof(int));
 #endif
 
   reset_sample_counters(myjshim);
   myshim->probe_other_events = NULL;
-  myshim->probe_tags = probe_sf_signals;
+  myshim->probe_tags = gc_probe_sf_signals;
 
   struct cmid_tag *app_hist = calloc(maxCMID, sizeof(struct cmid_tag));
 
@@ -684,6 +684,9 @@ Java_moma_MomaThread_shimCMIDHistogram(JNIEnv * env, jobject obj, jint rate, jin
   shim_read_counters(myjshim->begin, myshim);
 
   shim_read_counters(vals[last_index], myshim);
+
+  int front_stalls = 0;
+  
   while (ACCESS_ONCE(myjshim->flag) != 0xdead){
     myjshim->nr_samples++;
     step--;
@@ -691,19 +694,25 @@ Java_moma_MomaThread_shimCMIDHistogram(JNIEnv * env, jobject obj, jint rate, jin
           
     //one trustable sample
     unsigned int  nr_instructions_core = vals[now_index][INDEX_HW_COUNTERS+1]  - vals[last_index][INDEX_HW_COUNTERS+1];
-    unsigned int  nr_instructions_self = vals[now_index][INDEX_HW_COUNTERS+2]  - vals[last_index][INDEX_HW_COUNTERS+2];
+    unsigned int  nr_instructions_self = vals[now_index][INDEX_HW_COUNTERS+2]  - vals[last_index][INDEX_HW_COUNTERS+2];  
    
     unsigned int  nr_cycles = vals[now_index][INDEX_HW_COUNTERS]  - vals[last_index][INDEX_HW_COUNTERS];
     double ipc_core = (double)nr_instructions_core / nr_cycles;
     double ipc_self = (double)nr_instructions_self / nr_cycles;
     double ipc_app = ipc_core - ipc_self;
 
+
+      //      unsigned int  nr_front_stalls_core = vals[now_index][INDEX_HW_COUNTERS+3]  - vals[last_index][INDEX_HW_COUNTERS+3];
+      //      unsigned int  nr_front_stalls_self = vals[now_index][INDEX_HW_COUNTERS+4]  - vals[last_index][INDEX_HW_COUNTERS+4];  
+      unsigned int nr_wallclock_cycles = vals[now_index][0] - vals[last_index][0];
+      front_stalls = (nr_wallclock_cycles)*1000/nr_cycles;
+    
+    
+
     int cmid = vals[now_index][soft_index_base + CMID_OFFSET];
     //    int gcflag = vals[now_index][soft_index_base + GC_OFFSET];
+    //      vals[now_index][soft_index_base + GC_OFFSET] != 0 &&
     int interesting_sample = shim_trustable_sample(vals[last_index], vals[now_index], 99, 101) &&
-      vals[now_index][soft_index_base + EXEC_STAT_OFFSET] == 1 &&
-      ipc_core <= 5 &&
-      ipc_self <= ipc_core &&
       cmid > 0 &&
       cmid <= maxCMID;
 
@@ -722,6 +731,7 @@ Java_moma_MomaThread_shimCMIDHistogram(JNIEnv * env, jobject obj, jint rate, jin
 	if (dumpbuf_index + 4 < DUMP_BUFFER_SIZE){
 	  dumpbuf[dumpbuf_index++] = vals[now_index][0];
 	  dumpbuf[dumpbuf_index++] = (int)(ipc_app*1000);
+	  dumpbuf[dumpbuf_index++] = front_stalls;
 	  dumpbuf[dumpbuf_index++] = cmid;
 	}
 #endif
@@ -749,18 +759,19 @@ Java_moma_MomaThread_shimCMIDHistogram(JNIEnv * env, jobject obj, jint rate, jin
   }
   fprintf(dumpfd, "]}}\nOBJECTEND\n");
 
-#ifdef DUMP_IPC_TIMELINE
-  fprintf(dumpfd, "#id, timestamp, ipc, cmid\n");
-  for (int i=0; i<DUMP_BUFFER_SIZE; i+=3){
-    if (dumpbuf[i] != 0)
-      fprintf(dumpfd, "%d, %d, %.3f, %d\n", i/3, dumpbuf[i], (float)dumpbuf[i+1]/1000, dumpbuf[i+2]);
-  }
-  free(dumpbuf);
-#endif
+/* #ifdef DUMP_IPC_TIMELINE */
+/*   fprintf(dumpfd, "#id, timestamp, ipc, cmid\n"); */
+/*   for (int i=0; i<DUMP_BUFFER_SIZE; i+=3){ */
+/*     if (dumpbuf[i] != 0) */
+/*       fprintf(dumpfd, "%d, %d, %.3f, %d\n", i/3, dumpbuf[i], (float)dumpbuf[i+1]/1000, dumpbuf[i+2]); */
+/*   } */
+/*   free(dumpbuf); */
+/* #endif */
 
   fflush(dumpfd);
 
   free(app_hist);
+  return (int)dumpbuf;
 }
 
 struct gc_tag{

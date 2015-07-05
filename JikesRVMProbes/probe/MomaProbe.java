@@ -58,6 +58,7 @@ public class MomaProbe implements Probe {
           t.suspendMoma();
           while (t.state == t.MOMA_RUNNING)
             ;
+          t.reportLog();
           t.resetControlFlag();
         }
       }

@@ -5,6 +5,7 @@ import org.jikesrvm.Options;
 
 import static org.jikesrvm.runtime.SysCall.sysCall;
 
+import org.jikesrvm.classloader.RVMMethod;
 import org.jikesrvm.compilers.common.CompiledMethods;
 import org.jikesrvm.mm.mminterface.Selected;
 import org.jikesrvm.runtime.Entrypoints;
@@ -15,6 +16,7 @@ import org.mmtk.plan.CollectorContext;
 import org.mmtk.plan.ParallelCollector;
 import org.vmmagic.unboxed.Address;
 import probe.MomaProbe;
+
 import static moma.MomaCmd.ProfilingApproach.*;
 import static moma.MomaCmd.ProfilingPosition.*;
 
@@ -43,6 +45,8 @@ public class MomaThread extends Thread {
   public int targetHWThread;
   public MomaCmd curCmd;
 
+  public Address logbuf;
+
   //Address are used for asking shim thread to stop profiling
   public Address controlFlag;
 
@@ -51,7 +55,7 @@ public class MomaThread extends Thread {
   private static native void shimCounting();
   private static native void shimEventHistogram(int samplingRate);
   private static native void shimFidelityHistogram(int samplingRate);
-  private static native void shimCMIDHistogram(int samplingRate, int maxCMID);
+  private static native int shimCMIDHistogram(int samplingRate, int maxCMID);
   private static native void shimGCHistogram(int samplingRate, int maxCMID);
   private static native void shimOverheadSoftSampling(int samplingRate);
   private static native void shimOverheadSoftHistogram(int samplingRate, int maxCMID);
@@ -157,7 +161,7 @@ public class MomaThread extends Thread {
         case CMIDHISTOGRAM:
           System.out.println("Current last CMID " + CompiledMethods.currentCompiledMethodId);
           nr_iteration += 1;
-          shimCMIDHistogram(curCmd.samplingRate, CompiledMethods.currentCompiledMethodId);
+          logbuf = Address.fromIntSignExtend(shimCMIDHistogram(curCmd.samplingRate, CompiledMethods.currentCompiledMethodId));
           break;
         case GCHISTOGRAM:
           System.out.println("Current last CMID " + CompiledMethods.currentCompiledMethodId);
@@ -186,6 +190,39 @@ public class MomaThread extends Thread {
   public void suspendMoma() {
     System.out.println("Stop shim" + shimid);
     controlFlag.store(0xdead);
+  }
+
+  //log buffer format
+  //BUFFER SIZE is (10*1024*1024)
+  //enach log is [cmid_int,IPC_int,int]
+  private void reportCMIDHISTOGRAMlog(){
+    for (int i=0; i<10*1024*1024; i=i+4){
+      int timestamp = logbuf.plus(i * 4).loadInt();
+      int ipc = logbuf.plus((i+1)*4).loadInt();
+      int stall_cycles = logbuf.plus((i+2)*4).loadInt();
+      int cmid = logbuf.plus((i+3)*4).loadInt();
+      try {
+        RVMMethod m = CompiledMethods.getCompiledMethod(cmid).getMethod();
+        System.out.println(timestamp + "," + ipc + "," + stall_cycles + "," + cmid + "," + m.getDeclaringClass().toString() + "," + m.getName() + "," + m.getCurrentEntryCodeArray().length());
+      }catch(Exception e){
+        System.out.println(cmid + " is not a valid cmid");
+      }
+    }
+  }
+
+  public void reportLog(){
+    if (logbuf == null) {
+      System.out.println("shim" + shimid + ": logbuf is null, nothing to report");
+      return;
+    }
+
+    switch (curCmd.shimHow){
+      case CMIDHISTOGRAM:
+        reportCMIDHISTOGRAMlog();
+        break;
+      default:
+        System.out.println("shim" + shimid + ": has no idea how to report log for cmd " + CMIDHISTOGRAM.toString());
+    }
   }
 
   public void resetControlFlag(){
