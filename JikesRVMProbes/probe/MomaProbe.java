@@ -12,14 +12,13 @@ import static moma.MomaCmd.ProfilingApproach.*;
 import static moma.MomaCmd.ProfilingPosition.*;
 
 public class MomaProbe implements Probe {
-  public static final int StartIteration = 3;
+
   //Create SHIM thread for each core
-  public static final int maxCoreNumber = 4;
+  public static final int maxHardwareThreads = 8;
   //each core has one corresponding shim working thread
   public static MomaThread[] shims;
-  public static MomaCmd[] cmds;
-  public static MomaThread profiler;
-  public static int samplingRate = 1;
+  private static MomaThread[] remoteShimThreads;
+  private static MomaThread sameShimThread;
   //which CPU JikesRVM process are bind on
   public static int runningCPU = 4;
 
@@ -27,7 +26,7 @@ public class MomaProbe implements Probe {
 
 
   public void init(){
-    cmds = MomaCmd.parseShimCommand();
+    MomaCmd.parseShimCommand();
     long cpumask = sysCall.sysCall.sysGetThreadBindSet(Magic.getThreadRegister().pthread_id);
     for (int i=0; i<64; i++) {
       if ((cpumask & (1 << i)) != 0) {
@@ -35,35 +34,43 @@ public class MomaProbe implements Probe {
         break;
       }
     }
-    shims = new MomaThread[maxCoreNumber];
-    for (int i = 0; i < maxCoreNumber; i++) {
-      int targetCPU = i + maxCoreNumber;
-      if (cmds[0].shimWhere == REMOTECORE)
-          targetCPU = maxCoreNumber * 2 - i;
-
-      shims[i] = new MomaThread(i, i, targetCPU);
-      shims[i].setName("shim" + i);
+    System.out.println("SHIM:App is running on CPU " + runningCPU);
+    shims = new MomaThread[maxHardwareThreads];
+    remoteShimThreads = new MomaThread[maxHardwareThreads - 1];
+    int remoteIndex = 0;
+    for (int i = 0; i < maxHardwareThreads; i++) {
+      shims[i] = new MomaThread(i, i);
+      if (i + maxHardwareThreads/2 == runningCPU) {
+        sameShimThread = shims[i];
+      }else{
+        remoteShimThreads[remoteIndex++] = shims[i];
+      }
+      shims[i].setName("shimCPU" + i);
       shims[i].start();
-      if (targetCPU == runningCPU)
-        profiler = shims[i];
     }
-    System.out.println("Benchmark is running at CPU " + runningCPU + " target SHIM thread is " + profiler.toString());
+  }
+
+  private void launchShims() {
+    for (MomaThread t : shims){
+      if (t.curCmd != null){
+        synchronized (t) {
+          t.notifyAll();
+        }
+      }
+    }
   }
 
   private void waitForShims(){
-    try {
-      for (MomaThread t : shims) {
-        //suspend the shim thread if it is running.
-        if (t.state == t.MOMA_RUNNING) {
-          t.suspendMoma();
-          while (t.state == t.MOMA_RUNNING)
-            ;
-          t.reportLog();
-          t.resetControlFlag();
-        }
-      }
-    }catch (Exception e){
-      System.out.println("Exception is happened while asking shim threads to stop e:" + e);
+
+    for (MomaThread t : shims) {
+      //suspend the shim thread if it is running.
+      if (t.curCmd == null)
+        continue;
+      t.suspendMoma();
+      while (t.state == t.MOMA_RUNNING)
+        ;
+      t.reportLog();
+      t.resetControlFlag();
     }
   }
 
@@ -73,22 +80,30 @@ public class MomaProbe implements Probe {
 
   public void begin(String benchmark, int iteration, boolean warmup) {
     System.out.println("MomaProbe.begin(benchmark = " + benchmark + ", iteration = " + iteration + ", warmup = " + warmup + ")");
-    if (iteration < StartIteration)
-      return;
+    //any cmds we have to do for this iteration?
+    int remoteIndex = 0;
+    int anyprofiler = 0;
 
-    int cmdindex = (iteration - StartIteration)%cmds.length;
-    System.out.println("Using " + cmdindex + "th command");
-    profiler.curCmd = cmds[cmdindex];
-
-    synchronized (profiler) {
-      profiler.notifyAll();
+    for (int i=0; i < MomaCmd.shimCmds.length; i++){
+      MomaCmd c = MomaCmd.shimCmds[i];
+      if (c.shimWhen == iteration){
+        MomaThread t = null;
+        if (c.shimWhere == REMOTECORE) {
+          t = remoteShimThreads[remoteIndex++];
+        } else if (c.shimWhere == SAMECORE){
+          t = sameShimThread;
+        }
+        t.curCmd = c;
+        t.targetHWThread = runningCPU;
+        anyprofiler++;
+      }
     }
+    if (anyprofiler > 0)
+      launchShims();
   }
 
   public void end(String benchmark, int iteration, boolean warmup) {
     System.out.println("MomaProbe.end(benchmark = " + benchmark + ", iteration = " + iteration + ", warmup = " + warmup + ")");
-    if (iteration < StartIteration)
-      return;
     waitForShims();
   }
 

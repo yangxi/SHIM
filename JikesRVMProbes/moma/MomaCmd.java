@@ -13,7 +13,7 @@ public class MomaCmd {
   public static enum ProfilingApproach {
     EVENTHISTOGRAM, CMIDHISTOGRAM, COUNTING, LOGGING,  GCHISTOGRAM, FIDELITYHISTOGRAM,
     OVERHEADSOFTSAMPLING,OVERHEADSOFTHISTOGRAM,OVERHEADIPCHISTOGRAM,OVERHEADHISTOGRAM,
-    NOTHING,
+    TRACELOG, YPHISTOGRAM, TRACEEVENT, NOTHING,
   }
 
   public static enum ProfilingPosition {
@@ -21,35 +21,45 @@ public class MomaCmd {
   }
 
 
-  public static MomaCmd[] cmdIterations;
+  public static MomaCmd[] shimCmds;
 
+  //which iteration this cmd is running
+  public int shimWhen;
+  //how to profile the application
   public ProfilingApproach shimHow;
+  //where to put the profiler
   public ProfilingPosition shimWhere;
+  //what's the cpu frequency we want to use
   public String cpuFreq;
+  //what's the sampling frequency
   int samplingRate;
 
-  private MomaCmd(ProfilingPosition where, ProfilingApproach how, int rate, String freq) {
+  private MomaCmd(int when, ProfilingPosition where, ProfilingApproach how, int rate, String freq) {
+    shimWhen = when;
     shimHow = how;
     shimWhere = where;
     cpuFreq = freq;
     samplingRate = rate;
   }
   //momaApproach should be iteration:iteration:...
-  // iteration:"[remoteCore|sameCore],[histogram|hardonly|softonly|logging],rate,[cpuFrequency]"
+  // iteration:"iteration,[remoteCore|sameCore],[histogram|hardonly|softonly|logging],rate,[cpuFrequency]"
 
-  public static MomaCmd[] parseShimCommand() {
+  public static void parseShimCommand() {
     String[] its = Options.MomaApproach.split(":");
-    cmdIterations = new MomaCmd[its.length];
+    shimCmds = new MomaCmd[its.length];
     for (int i = 0; i < its.length; i++) {
       String[] cmds = its[i].split(",");
       System.out.println("Parse command for iteration " + i + " : " + its[i]);
+
+      int when = Integer.parseInt(cmds[0]);
+
       ProfilingPosition where = SAMECORE;
-      if (cmds[0].equals("remote")) {
+      if (cmds[1].equals("remote")) {
         where = REMOTECORE;
       }
 
-      String n = cmds[1];
-      ProfilingApproach how = ProfilingApproach.EVENTHISTOGRAM;
+      String n = cmds[2];
+      ProfilingApproach how = ProfilingApproach.NOTHING;
 
 
       if (n.equals("eventHistogram")) {
@@ -74,18 +84,24 @@ public class MomaCmd {
         how = ProfilingApproach.OVERHEADIPCHISTOGRAM;
       } else if (n.equals("overheadHistogram")) {
         how = ProfilingApproach.OVERHEADHISTOGRAM;
+      } else if (n.equals("traceLog")) {
+        how = ProfilingApproach.TRACELOG;
+      } else if (n.equals("traceEvents")) {
+        how = ProfilingApproach.TRACEEVENT;
+      } else if (n.equals("ypHistogram")) {
+        how = ProfilingApproach.YPHISTOGRAM;
       } else {
         System.out.println("Unknown profiling approach:" + Options.MomaApproach);
         how = ProfilingApproach.NOTHING;
       }
 
-      int rate = Integer.parseInt(cmds[2]);
-      String freq = cmds[3];
-      cmdIterations[i] = new MomaCmd(where, how, rate, freq);
-      System.out.println("Iteration" + i + " CMD " + where + "," + how + "," + rate + "," + freq);
+      int rate = Integer.parseInt(cmds[3]);
+      String freq = cmds[4];
+      shimCmds[i] = new MomaCmd(when,where, how, rate, freq);
+      System.out.println("Iteration" + i + " CMD " + when + "," + where + "," + how + "," + rate + "," + freq);
     }
-    return cmdIterations;
   }
+
 
 }
 
