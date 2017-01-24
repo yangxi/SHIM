@@ -19,7 +19,7 @@ hg update moma;
 #you need these packages to build the JikesRVM,
 #build-essential, gcc-multilib, g++-multilib, ant, bison, openjdk-7-jdk and mercurial
 #build the JikesRVM
-./bin/build ./bin/buildit --with-perfevent localhost  production -m shimIP
+./bin/buildit --with-perfevent localhost  production -m shimIP
 #this build generates method ID, yieldpoint ID, GC phase signals
 
 * compile probes
