@@ -79,6 +79,7 @@ public class MomaThread extends Thread {
         targetThread = t.nativeTid;
       }
     }
+    System.out.println("Create " + MomaProbe.maxCoreNumber + " native shim profiler thread\n");
     initShimProfiler(MomaProbe.maxCoreNumber, fpOffset, execStateOffset, cmidOffset, gcOffset, targetThread);
     maxCPUFreq = getMaxFrequency();
     minCPUFreq = getMinFrequency();

@@ -1,15 +1,20 @@
-This directory contains many call back modules for Java workloads.
-"moma" is the module for profiling JikesRVM with SHIM. Here is 
-the instruction to setup it up.
+This directory have some call back modules for measuring Java workloads.
+"moma" is the SHIM module that profiles JikesRVM.
 
-* moma needs a special kernel and a kernel driver to tell you who is 
-  running at which hardware contexts.
-  
-The kernel patch and the driver is in "../ppid_module" directory.
+Moma is an academic prototype and it crosses the language VM, kernel, and
+CPU micro-architecture, so it is a little bit hard to understand the code and
+setup the environment.
+
+Ready? Let's go.
+
+Step 1:  moma needs a special kernel and a kernel driver for checking which thread
+runs on which CPU. The kernel patch and the driver is in "../ppid_module" directory.
 Please follow "README" in the directory to setup the kernel.
- 
 
-* moma needs a patched JikesRVM for generating signals.
+Step 2: moma needs a special patched JikesRVM for generating software signals, like method ID, yieldpoint ID.
+The JikesRVM is a 32bit x86 applications, you can build&run it on AMD64, which requires 32bit library.
+Because moma uses libpfm for translating human readable perf-counter names to linux kernel magic perf ABI numbers,
+please make sure that you install 32bit libpfm by downloading perfmon2-libpfm4, and "make OPTIM="-m32 -O2"
 
 hg clone https://coderyang@bitbucket.org/coderyang/jikesrvmshim jikesrvmshim
 cd jikesrvmshim;
@@ -22,18 +27,28 @@ hg update moma;
 ./bin/buildit --with-perfevent localhost  production -m shimIP
 #this build generates method ID, yieldpoint ID, GC phase signals
 
-* compile probes
+Step 3 (you are a hero already): building 32bit x86 version of this probe package
 #setup parameters in "common.mk" based on where you put the JikesRVM
 #build the JikesRVM probes
 make OPTION=-m32
 
-* run experiments
-#download dacapo benchmark http://www.dacapobench.org 
+Step 4: Run experiments
+#download dacapo benchmark http://www.dacapobench.org
 #setup PROBEDIR
 PROBEDIR=`pwd`
 #On i7-4770 processor, this will bind JikesRVM process on CPU 7, SHIM thread on CPU 3 will observe
 #the application's behavior in the same core, and build a histogram about the average IPC of methods.
+
+# `public static final int maxCoreNumber = 4;` in MomaProbe.java tells the profiler how many CPUs this machine has.
+# 'public static int runningCPU = 4;' in MomaProbe.java tells the profiler which CPU JikesRVM runs on
+# moma creates the number of maxCoreNumber shim tasks, each one targets the paired SMT thread, for example, if you have 4
+# CPUS, 8 SMT threads, the SHIM thread 0 runs on SMT 0, marks SMT 4
+# In the following case, "taskset 0x80" sets the JikesRVM VM on SMT7, so the runningCPU is 7, then SHIM task 0 monitors this running CPU.
+# After the program finished, SHIM threads output results to /tmp/shim#NUMBER
+
 sudo taskset 0x80 ../../jikesrvmshim/dist/production_shimIP_x86_64-linux/rvm -X:gc:threads=1 -Xms204M -X:gc:variableSizeHeap=false  -Dprobes=Moma -X:vm:momaEvents=UNHALTED_CORE_CYCLES:u:k,INSTRUCTION_RETIRED:u:k:t,INSTRUCTION_RETIRED:u:k -X:gc:eagerMmapSpaces=true -X:availableProcessors=1 -X:vm:momaApproach=same,cmidHistogram,1,default -X:gc:fixedNursery=32M  -Djava.library.path=$PROBEDIR -cp $PROBEDIR/probes.jar:/usr/share/benchmarks/dacapo/dacapo-9.12-bach.jar Harness -c probe.DacapoBachCallback -n 3 lusearch
+
+
 #if you want to control the compiler, you can do a warmup reply
 REPLAYDIR=`pwd`/bmadvice
-sudo taskset 0x80  ../../jikesrvmshim/dist/production_shimIP_x86_64-linux/rvm -X:gc:threads=1 -Xms204M -X:gc:variableSizeHeap=false  -Dprobes=Replay,Moma -X:aos:initial_compiler=base -X:aos:enable_recompilation=false -X:aos:enable_bulk_compile=true -X:aos:cafi=$REPLAYDIR/lusearch.ca -X:aos:dcfi=$REPLAYDIR/lusearch.dc -X:vm:edgeCounterFile=$REPLAYDIR/lusearch.ec -X:vm:momaEvents=UNHALTED_CORE_CYCLES:u:k,INSTRUCTION_RETIRED:u:k:t,INSTRUCTION_RETIRED:u:k -X:gc:eagerMmapSpaces=true -X:availableProcessors=1 -X:vm:momaApproach=same,cmidHistogram,1,default -X:gc:fixedNursery=32M  -Djava.library.path=$PROBEDIR -cp $PROBEDIR/probes.jar:/usr/share/benchmarks/dacapo/dacapo-9.12-bach.jar Harness -c probe.DacapoBachCallback -n 3 lusearch 
+sudo taskset 0x80  ../../jikesrvmshim/dist/production_shimIP_x86_64-linux/rvm -X:gc:threads=1 -Xms204M -X:gc:variableSizeHeap=false  -Dprobes=Replay,Moma -X:aos:initial_compiler=base -X:aos:enable_recompilation=false -X:aos:enable_bulk_compile=true -X:aos:cafi=$REPLAYDIR/lusearch.ca -X:aos:dcfi=$REPLAYDIR/lusearch.dc -X:vm:edgeCounterFile=$REPLAYDIR/lusearch.ec -X:vm:momaEvents=UNHALTED_CORE_CYCLES:u:k,INSTRUCTION_RETIRED:u:k:t,INSTRUCTION_RETIRED:u:k -X:gc:eagerMmapSpaces=true -X:availableProcessors=1 -X:vm:momaApproach=same,cmidHistogram,1,default -X:gc:fixedNursery=32M  -Djava.library.path=$PROBEDIR -cp $PROBEDIR/probes.jar:/usr/share/benchmarks/dacapo/dacapo-9.12-bach.jar Harness -c probe.DacapoBachCallback -n 3 lusearch

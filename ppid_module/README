@@ -25,3 +25,5 @@ if (kadr == MAP_FAILED)	{
    exit(-1);
 }
 pid_signal_buf = (char *)kadr;
+
+ppid_test.c is an example for reading the signal. Compile&run it, you should see some pids.

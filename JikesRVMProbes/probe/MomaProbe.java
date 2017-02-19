@@ -20,7 +20,7 @@ public class MomaProbe implements Probe {
   public static MomaCmd[] cmds;
   public static MomaThread profiler;
   public static int samplingRate = 1;
-  //which CPU JikesRVM process are bind on
+  //which CPU JikesRVM process are bind on, runningCPU is updated at runtime by checking the cpu affinity setting
   public static int runningCPU = 4;
 
 
